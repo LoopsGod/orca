@@ -17,10 +17,16 @@ import { parseTomlTableHeaderPath } from './config-toml-key-path'
  * managed homes live under userData, which makes that path longer than
  * `sun_path`, so every interactive `codex` fails with "path must be shorter
  * than SUN_LEN". Only for such homes, Orca turns daemon auto-start off.
+ *
+ * On native Windows Codex launches that daemon with DETACHED_PROCESS, so it has
+ * no console and every `git` it runs for a new session pops a console window.
+ * Orca turns auto-start off there too unless the user set it explicitly.
  */
 const DAEMON_SOCKET_SEGMENTS = ['app-server-control', 'app-server-control.sock']
 export const CODEX_DAEMON_OVERRIDE_MARKER = '# orca: CODEX_HOME too long for the daemon socket'
-const DAEMON_OVERRIDE_RAW = `false ${CODEX_DAEMON_OVERRIDE_MARKER}`
+const CODEX_WINDOWS_DAEMON_OVERRIDE_MARKER =
+  '# orca: Codex daemon flashes console windows on Windows'
+const DAEMON_OVERRIDE_MARKERS = [CODEX_DAEMON_OVERRIDE_MARKER, CODEX_WINDOWS_DAEMON_OVERRIDE_MARKER]
 
 export function codexDaemonSocketPath(homePath: string, platform = process.platform): string {
   const wsl = parseWslUncPath(homePath)
@@ -50,32 +56,66 @@ export function codexDaemonSocketPathExceedsLimit(
   return Buffer.byteLength(socketPath, 'utf8') > unixSocketPathByteLimit(os)
 }
 
+function hasCodexDaemonOverrideMarker(text: string): boolean {
+  return DAEMON_OVERRIDE_MARKERS.some((marker) => text.includes(marker))
+}
+
+function hasUserDaemonAutoStartSetting(config: string): boolean {
+  return config
+    .split('\n')
+    .some((line) => /\bdaemon_auto_start\s*=/.test(line) && !hasCodexDaemonOverrideMarker(line))
+}
+
+function codexDaemonOverrideMarker(
+  config: string,
+  homePath: string,
+  platform: NodeJS.Platform
+): string | null {
+  if (codexDaemonSocketPathExceedsLimit(homePath, platform)) {
+    return CODEX_DAEMON_OVERRIDE_MARKER
+  }
+  // Why: WSL homes run Linux Codex, whose daemon never opens Windows consoles.
+  if (
+    platform === 'win32' &&
+    !parseWslUncPath(homePath) &&
+    !hasUserDaemonAutoStartSetting(config)
+  ) {
+    return CODEX_WINDOWS_DAEMON_OVERRIDE_MARKER
+  }
+  return null
+}
+
 const unguardableHomesWarned = new Set<string>()
 
-/** Applies (or removes) Orca's daemon override so it tracks the home's current path. */
+/** Applies (or removes) Orca's daemon override so it tracks the home's current path and platform. */
 export function applyCodexDaemonSocketGuard(
   config: string,
   homePath: string,
   platform = process.platform
 ): string {
-  if (!codexDaemonSocketPathExceedsLimit(homePath, platform)) {
+  const marker = codexDaemonOverrideMarker(config, homePath, platform)
+  if (!marker) {
     return stripCodexDaemonOverride(config)
   }
   // Why: upsert rewrites an existing daemon_auto_start line in place, so re-applying is a no-op.
   const guarded = upsertTableSettingsInContent(
     config,
     'features',
-    new Map([['daemon_auto_start', DAEMON_OVERRIDE_RAW]])
+    new Map([['daemon_auto_start', `false ${marker}`]])
   )
   if (
-    !guarded.includes(CODEX_DAEMON_OVERRIDE_MARKER) &&
+    !guarded.includes(marker) &&
     !/\bdaemon_auto_start\s*=\s*false\b/.test(guarded) &&
     !unguardableHomesWarned.has(homePath)
   ) {
     // Why: an inline `features = {...}` or `[[features]]` blocks the upsert; say so once instead of failing silently.
     unguardableHomesWarned.add(homePath)
+    const consequence =
+      marker === CODEX_DAEMON_OVERRIDE_MARKER
+        ? 'Codex may fail with "path must be shorter than SUN_LEN"'
+        : 'Codex may flash console windows when a session starts'
     console.warn(
-      `[codex-config] Could not turn off Codex daemon auto-start in ${homePath}: its config defines features in a form Orca cannot extend. Codex may fail with "path must be shorter than SUN_LEN"; add daemon_auto_start = false to features in ~/.codex/config.toml.`
+      `[codex-config] Could not turn off Codex daemon auto-start in ${homePath}: its config defines features in a form Orca cannot extend. ${consequence}; add daemon_auto_start = false to features in ~/.codex/config.toml.`
     )
   }
   return guarded
@@ -83,9 +123,7 @@ export function applyCodexDaemonSocketGuard(
 
 /** True when a config holds nothing but Orca's daemon override, i.e. no user settings. */
 export function isOnlyCodexDaemonOverride(config: string): boolean {
-  return (
-    config.includes(CODEX_DAEMON_OVERRIDE_MARKER) && stripCodexDaemonOverride(config).trim() === ''
-  )
+  return hasCodexDaemonOverrideMarker(config) && stripCodexDaemonOverride(config).trim() === ''
 }
 
 /**
@@ -93,7 +131,7 @@ export function isOnlyCodexDaemonOverride(config: string): boolean {
  * removal, so the override never leaks into the user's real ~/.codex.
  */
 export function stripCodexDaemonOverride(config: string): string {
-  if (!config.includes(CODEX_DAEMON_OVERRIDE_MARKER)) {
+  if (!hasCodexDaemonOverrideMarker(config)) {
     return config
   }
   const usesCrlf = config.includes('\r\n')
@@ -118,7 +156,7 @@ export function stripCodexDaemonOverride(config: string): string {
   for (const line of lines) {
     const structural = isTomlStructuralLine(scan)
     scan = updateTomlLineScanState(scan, line)
-    if (structural && line.trimEnd().endsWith(CODEX_DAEMON_OVERRIDE_MARKER)) {
+    if (structural && DAEMON_OVERRIDE_MARKERS.some((m) => line.trimEnd().endsWith(m))) {
       removedFromFeatures ||= featuresHeaderIndex !== -1
       continue
     }

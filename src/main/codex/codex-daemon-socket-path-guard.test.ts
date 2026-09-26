@@ -15,6 +15,7 @@ import {
   applyCodexDaemonSocketGuard,
   codexDaemonSocketPath,
   codexDaemonSocketPathExceedsLimit,
+  isOnlyCodexDaemonOverride,
   stripCodexDaemonOverride
 } from './codex-daemon-socket-path-guard'
 import {
@@ -28,6 +29,8 @@ import { extractOrdinaryCodexSettings } from './config-toml-runtime-owned-sectio
 const UUID = '9dd962e2-449d-44c4-9733-0633f255064a'
 const MAC_MANAGED_HOME = `/Users/john/Library/Application Support/orca/codex-accounts/${UUID}/home`
 const OVERRIDE_LINE = 'daemon_auto_start = false # orca: CODEX_HOME too long for the daemon socket'
+const WINDOWS_OVERRIDE_LINE =
+  'daemon_auto_start = false # orca: Codex daemon flashes console windows on Windows'
 
 // The socket suffix is 43 bytes: sun_path 104 (macOS) / 108 (Linux) leaves 60 / 64 for the home.
 function homeOfLength(length: number): string {
@@ -135,6 +138,43 @@ describe('applyCodexDaemonSocketGuard', () => {
   })
 })
 
+describe('applyCodexDaemonSocketGuard on native Windows', () => {
+  const SHORT_WIN_HOME = 'C:\\Users\\neil\\AppData\\Roaming\\orca\\codex-runtime-home\\home'
+
+  it('turns daemon auto-start off in a short home and strips back to the original', () => {
+    expect(codexDaemonSocketPathExceedsLimit(SHORT_WIN_HOME, 'win32')).toBe(false)
+    const config = 'model = "gpt-5"\n'
+    const guarded = applyCodexDaemonSocketGuard(config, SHORT_WIN_HOME, 'win32')
+    expect(guarded).toBe(`${config}\n[features]\n${WINDOWS_OVERRIDE_LINE}\n`)
+    expect(applyCodexDaemonSocketGuard(guarded, SHORT_WIN_HOME, 'win32')).toBe(guarded)
+    expect(stripCodexDaemonOverride(guarded)).toBe(config)
+    expect(extractOrdinaryCodexSettings(guarded)).toBe('model = "gpt-5"')
+    expect(
+      isOnlyCodexDaemonOverride(applyCodexDaemonSocketGuard('', SHORT_WIN_HOME, 'win32'))
+    ).toBe(true)
+  })
+
+  it('keeps an explicit user daemon_auto_start setting', () => {
+    const config = '[features]\ndaemon_auto_start = true\n'
+    expect(applyCodexDaemonSocketGuard(config, SHORT_WIN_HOME, 'win32')).toBe(config)
+    const dotted = 'features.daemon_auto_start = true\n'
+    expect(applyCodexDaemonSocketGuard(dotted, SHORT_WIN_HOME, 'win32')).toBe(dotted)
+  })
+
+  it('still overrides an explicit true when the socket path is too long', () => {
+    const home = `C:\\Users\\neil\\AppData\\Roaming\\orca\\codex-accounts\\${UUID}\\home`
+    const config = '[features]\ndaemon_auto_start = true\n'
+    expect(applyCodexDaemonSocketGuard(config, home, 'win32')).toBe(
+      `[features]\n${OVERRIDE_LINE}\n`
+    )
+  })
+
+  it('leaves WSL homes on the default daemon behavior', () => {
+    const shortWsl = '\\\\wsl.localhost\\Ubuntu\\home\\u\\.codex-orca'
+    expect(applyCodexDaemonSocketGuard('model = "m"\n', shortWsl, 'win32')).toBe('model = "m"\n')
+  })
+})
+
 describe('syncSystemConfigIntoManagedCodexHome daemon guard', () => {
   let root: string
   let systemHomePath: string
@@ -234,10 +274,15 @@ describe('syncSystemConfigIntoManagedCodexHome daemon guard', () => {
     expect(readFileSync(join(systemHomePath, 'config.toml'), 'utf-8')).toBe('model = "gpt-5"\n')
   })
 
-  it('leaves a short home on the default daemon behavior', () => {
+  it('leaves a short home on the default daemon behavior except on native Windows', () => {
     writeFileSync(join(systemHomePath, 'config.toml'), 'model = "gpt-5"\n')
     const runtimeHomePath = makeHome('h')
     syncSystemConfigIntoManagedCodexHome({ runtimeHomePath, systemHomePath })
-    expect(readFileSync(join(runtimeHomePath, 'config.toml'), 'utf-8')).toBe('model = "gpt-5"\n')
+    expect(readFileSync(join(runtimeHomePath, 'config.toml'), 'utf-8')).toBe(
+      process.platform === 'win32'
+        ? `model = "gpt-5"\n\n[features]\n${WINDOWS_OVERRIDE_LINE}\n`
+        : 'model = "gpt-5"\n'
+    )
+    expect(readFileSync(join(systemHomePath, 'config.toml'), 'utf-8')).toBe('model = "gpt-5"\n')
   })
 })
