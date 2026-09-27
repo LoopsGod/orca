@@ -10,7 +10,10 @@ function session(): OpenRouterTranscriptionSession {
   return session
 }
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+})
 
 describe('OpenRouterTranscriptionSession', () => {
   it('sends MAI a base64 PCM16 WAV with Bearer authentication and returns trimmed text', async () => {
@@ -62,6 +65,33 @@ describe('OpenRouterTranscriptionSession', () => {
     expect(() => recording.feedAudio(new Float32Array(1), 16000)).toThrow('limited to 10 minutes')
   })
 
+  it('allows more upload time for long recordings while keeping requests bounded', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout')
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ text: 'done' }))
+    vi.stubGlobal('fetch', fetchMock)
+    await session().finish()
+    fetchMock.mockResolvedValue(Response.json({ text: 'done' }))
+    const recording = new OpenRouterTranscriptionSession(modelId, () => apiKey)
+    recording.feedAudio(new Float32Array(16000 * 600), 16000)
+    await recording.finish()
+
+    const shortTimeout = timeout.mock.calls[0][0]
+    const longTimeout = timeout.mock.calls[1][0]
+    expect(shortTimeout).toBeGreaterThanOrEqual(60_000)
+    expect(shortTimeout).toBeLessThanOrEqual(90_000)
+    expect(longTimeout).toBeGreaterThan(shortTimeout * 2)
+    expect(longTimeout).toBeLessThanOrEqual(360_000)
+    expect(fetchMock.mock.calls[1][1]?.signal).toBe(timeout.mock.results[1].value)
+  })
+
+  it.each([null, undefined])('accepts a transcript with error: %s', async (error) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(Response.json({ text: '  transcript ', error }))
+    )
+    expect(await session().finish()).toBe('transcript')
+  })
+
   it('does not read credentials or fetch for an empty session', async () => {
     const readKey = vi.fn()
     const fetchMock = vi.fn()
@@ -77,6 +107,7 @@ describe('OpenRouterTranscriptionSession', () => {
     [200, { error: 'Provider unavailable' }, 'Provider unavailable'],
     [200, { error: {} }, 'OpenRouter returned a transcription error'],
     [403, {}, 'Check your OpenRouter API key'],
+    [401, { error: null, text: 'ignore' }, 'Check your OpenRouter API key'],
     [429, {}, 'HTTP 429'],
     [200, {}, 'did not include text'],
     [200, null, 'did not include text'],

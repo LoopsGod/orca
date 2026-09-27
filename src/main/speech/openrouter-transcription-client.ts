@@ -26,6 +26,9 @@ function getErrorMessage(data: unknown): string | undefined {
   if (typeof data !== 'object' || data === null || !('error' in data)) {
     return undefined
   }
+  if (data.error === null || data.error === undefined) {
+    return undefined
+  }
   if (typeof data.error === 'string') {
     return data.error
   }
@@ -64,6 +67,9 @@ export class OpenRouterTranscriptionSession implements CloudTranscriptionSession
 
     const apiKey = this.readApiKey()
     try {
+      const audioData = wav.toString('base64')
+      // Allow upload time for the base64 payload as well as provider processing.
+      const timeoutMs = 60_000 + Math.ceil(audioData.length / 1_000_000) * 10_000
       // OpenRouter's STT API accepts base64 audio in JSON, separate from chat completions.
       const response = await fetch(OPENROUTER_TRANSCRIPTION_URL, {
         method: 'POST',
@@ -75,9 +81,9 @@ export class OpenRouterTranscriptionSession implements CloudTranscriptionSession
         },
         body: JSON.stringify({
           model,
-          input_audio: { data: wav.toString('base64'), format: 'wav' }
+          input_audio: { data: audioData, format: 'wav' }
         }),
-        signal: AbortSignal.timeout(60_000)
+        signal: AbortSignal.timeout(timeoutMs)
       })
       const data: unknown = await response.json().catch(() => null)
       const errorMessage = getErrorMessage(data)
