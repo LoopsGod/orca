@@ -76,7 +76,7 @@ export type VoiceSettings = {
   terminalConfirmBeforeInsert: boolean
   userModels: UserModelConfig[]
   openAiApiKeyConfigured: boolean
-  openRouterApiKeyConfigured: boolean
+  openRouterApiKeyConfigured?: boolean
   /** null = system default input device */
   microphoneDeviceId: string | null
   /** Cached label for display when the preferred device is unplugged */

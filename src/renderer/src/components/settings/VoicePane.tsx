@@ -10,7 +10,12 @@ import { CloudTranscriptionSettingsRow } from './CloudTranscriptionSettingsRow'
 import { handleVoiceDictationToggle } from './voice-dictation-toggle'
 import { VoiceDictationSettingsSection } from './VoiceDictationSettingsSection'
 import { VoiceSpeechModelSection } from './VoiceSpeechModelSection'
-import { useCloudTranscriptionKey } from './use-cloud-transcription-key'
+import {
+  cloudTranscriptionConfiguredUpdate,
+  getCloudTranscriptionKeyApi,
+  getCloudTranscriptionProviderLabel,
+  type CloudTranscriptionProvider
+} from './cloud-transcription-provider'
 import { translate } from '@/i18n/i18n'
 
 export { handleVoiceDictationToggle }
@@ -29,6 +34,12 @@ export function VoicePane({ settings, updateSettings }: VoicePaneProps): React.J
   const markFeatureTipsSeen = useAppStore((s) => s.markFeatureTipsSeen)
   const [catalog, setCatalog] = useState<SpeechModelManifest[]>([])
   const [permissionPending, setPermissionPending] = useState(false)
+  const [keyDialog, setKeyDialog] = useState<{
+    provider: CloudTranscriptionProvider
+    modelId: string | null
+  } | null>(null)
+  const [apiKeyDraft, setApiKeyDraft] = useState('')
+  const [keyPending, setKeyPending] = useState(false)
   const mountedRef = useRef(true)
   // Why: every write here is a read-modify-write of the whole voice object, and the
   // writers are async (key status probe, save/clear key). Merging onto the render-time
@@ -67,6 +78,33 @@ export function VoicePane({ settings, updateSettings }: VoicePaneProps): React.J
       cancelled = true
     }
   }, [refreshModelStates])
+
+  useEffect(() => {
+    let cancelled = false
+    for (const provider of ['openai', 'openrouter'] as const) {
+      const configured =
+        provider === 'openai'
+          ? voiceSettings.openAiApiKeyConfigured
+          : (voiceSettings.openRouterApiKeyConfigured ?? false)
+      void getCloudTranscriptionKeyApi(provider)
+        .getStatus()
+        .then((status) => {
+          if (!cancelled && status.configured !== configured) {
+            updateVoiceSettings(cloudTranscriptionConfiguredUpdate(provider, status.configured))
+            refreshModelStates()
+          }
+        })
+        .catch(() => {})
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [
+    updateVoiceSettings,
+    refreshModelStates,
+    voiceSettings.openAiApiKeyConfigured,
+    voiceSettings.openRouterApiKeyConfigured
+  ])
 
   useEffect(() => {
     const cleanup = window.api.speech.onDownloadProgress(() => {
@@ -115,23 +153,73 @@ export function VoicePane({ settings, updateSettings }: VoicePaneProps): React.J
     })
   }
 
-  const keyOptions = {
-    catalog,
-    voiceSettingsRef,
-    mountedRef,
-    updateVoiceSettings,
-    refreshModelStates
+  const openKeyDialog = (
+    provider: CloudTranscriptionProvider,
+    modelId: string | null = null
+  ): void => {
+    if (!keyPending) {
+      setApiKeyDraft('')
+      setKeyDialog({ provider, modelId })
+    }
   }
-  const openAiKey = useCloudTranscriptionKey({
-    ...keyOptions,
-    provider: 'openai',
-    configured: voiceSettings.openAiApiKeyConfigured
-  })
-  const openRouterKey = useCloudTranscriptionKey({
-    ...keyOptions,
-    provider: 'openrouter',
-    configured: voiceSettings.openRouterApiKeyConfigured
-  })
+  const closeKeyDialog = (): void => {
+    setKeyDialog(null)
+    setApiKeyDraft('')
+  }
+  const keyConfigured = (provider: CloudTranscriptionProvider): boolean =>
+    provider === 'openai'
+      ? voiceSettings.openAiApiKeyConfigured
+      : (voiceSettings.openRouterApiKeyConfigured ?? false)
+
+  const changeKey = async (
+    provider: CloudTranscriptionProvider,
+    operation: 'save' | 'clear'
+  ): Promise<void> => {
+    if (keyPending) {
+      return
+    }
+    setKeyPending(true)
+    const api = getCloudTranscriptionKeyApi(provider)
+    const providerLabel = getCloudTranscriptionProviderLabel(provider)
+    try {
+      await (operation === 'save' ? api.save(apiKeyDraft) : api.clear())
+      const currentModelId = voiceSettingsRef.current.sttModel
+      const clearSelectedModel =
+        operation === 'clear' &&
+        catalog.some((model) => model.id === currentModelId && model.provider === provider)
+      updateVoiceSettings({
+        ...cloudTranscriptionConfiguredUpdate(provider, operation === 'save'),
+        ...(clearSelectedModel
+          ? { sttModel: '' }
+          : operation === 'save' && keyDialog?.modelId
+            ? { sttModel: keyDialog.modelId }
+            : {})
+      })
+      await refreshModelStates()
+      closeKeyDialog()
+      toast.success(
+        operation === 'save'
+          ? translate('settings.voice.cloudKeySaved', '{{provider}} API key saved', {
+              provider: providerLabel
+            })
+          : translate('settings.voice.cloudKeyCleared', '{{provider}} API key cleared', {
+              provider: providerLabel
+            })
+      )
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : translate('settings.voice.cloudKeyFailed', 'Failed to update {{provider}} API key', {
+              provider: providerLabel
+            })
+      )
+    } finally {
+      if (mountedRef.current) {
+        setKeyPending(false)
+      }
+    }
+  }
 
   return (
     <div ref={handlePaneRef} className="space-y-1">
@@ -147,26 +235,35 @@ export function VoicePane({ settings, updateSettings }: VoicePaneProps): React.J
         catalog={catalog}
         modelStates={modelStates}
         onUpdateVoiceSettings={updateVoiceSettings}
-        onOpenCloudDialog={(provider, modelId) => {
-          const key = provider === 'openai' ? openAiKey : openRouterKey
-          key.openDialog(modelId)
-        }}
+        onOpenCloudDialog={openKeyDialog}
         onRefreshModelStates={refreshModelStates}
       />
 
-      {[openAiKey, openRouterKey].map((key) => (
-        <Fragment key={key.provider}>
+      {(['openai', 'openrouter'] as const).map((provider) => (
+        <Fragment key={provider}>
           <Separator />
           <CloudTranscriptionSettingsRow
-            provider={key.provider}
-            configured={key.configured}
-            disabled={key.pending}
-            onConfigure={() => key.openDialog()}
-            onClear={key.onClear}
+            provider={provider}
+            configured={keyConfigured(provider)}
+            disabled={keyPending}
+            onConfigure={() => openKeyDialog(provider)}
+            onClear={() => void changeKey(provider, 'clear')}
           />
-          <CloudTranscriptionKeyDialog {...key} />
         </Fragment>
       ))}
+      {keyDialog && (
+        <CloudTranscriptionKeyDialog
+          open
+          provider={keyDialog.provider}
+          configured={keyConfigured(keyDialog.provider)}
+          apiKeyDraft={apiKeyDraft}
+          pending={keyPending}
+          onOpenChange={closeKeyDialog}
+          onApiKeyDraftChange={setApiKeyDraft}
+          onSave={() => void changeKey(keyDialog.provider, 'save')}
+          onClear={() => void changeKey(keyDialog.provider, 'clear')}
+        />
+      )}
     </div>
   )
 }

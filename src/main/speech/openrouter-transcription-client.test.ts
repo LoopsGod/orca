@@ -18,7 +18,14 @@ describe('OpenRouterTranscriptionSession', () => {
       .fn<typeof fetch>()
       .mockResolvedValue(Response.json({ text: '  Hello world \n' }))
     vi.stubGlobal('fetch', fetchMock)
-    expect(await session().finish()).toBe('Hello world')
+    const recording = new OpenRouterTranscriptionSession(modelId, () => apiKey)
+    const samples = new Float32Array([0.5, 0.5, 0.5, -0.5, -0.5, -0.5])
+    recording.feedAudio(samples, 48000)
+    samples.fill(0)
+    recording.feedAudio(new Float32Array([2, -2]), 16000)
+    expect(await recording.finish()).toBe('Hello world')
+    expect(await recording.finish()).toBe('')
+    expect(fetchMock).toHaveBeenCalledOnce()
     const [url, init] = fetchMock.mock.calls[0]
     expect(url).toBe('https://openrouter.ai/api/v1/audio/transcriptions')
     expect(init).toMatchObject({
@@ -43,10 +50,16 @@ describe('OpenRouterTranscriptionSession', () => {
     expect(wav.readUInt16LE(22)).toBe(1)
     expect(wav.readUInt32LE(24)).toBe(16000)
     expect(wav.readUInt16LE(34)).toBe(16)
-    expect(wav.readUInt32LE(40)).toBe(6)
-    expect([wav.readInt16LE(44), wav.readInt16LE(46), wav.readInt16LE(48)]).toEqual([
-      0, 32767, -32768
+    expect(wav.readUInt32LE(40)).toBe(8)
+    expect([44, 46, 48, 50].map((offset) => wav.readInt16LE(offset))).toEqual([
+      16384, -16384, 32767, -32768
     ])
+  })
+
+  it('limits cumulative recording duration to ten minutes', () => {
+    const recording = new OpenRouterTranscriptionSession(modelId, () => apiKey)
+    recording.feedAudio(new Float32Array(16000 * 600), 16000)
+    expect(() => recording.feedAudio(new Float32Array(1), 16000)).toThrow('limited to 10 minutes')
   })
 
   it('does not read credentials or fetch for an empty session', async () => {
