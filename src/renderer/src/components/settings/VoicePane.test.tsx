@@ -395,6 +395,77 @@ describe('Voice cloud transcription keys', () => {
 
   afterEach(cleanup)
 
+  it.each([
+    ['openai', true],
+    ['openai', false],
+    ['openrouter', true],
+    ['openrouter', false]
+  ] as const)(
+    'waits for %s status persistence (success: %s) before refreshing',
+    async (provider, succeeds) => {
+      const persistence = Promise.withResolvers<void>()
+      window.api.speech.getOpenAiApiKeyStatus = vi.fn(async () => ({
+        configured: provider === 'openai'
+      }))
+      window.api.speech.getOpenRouterApiKeyStatus = vi.fn(async () => ({
+        configured: provider === 'openrouter'
+      }))
+      const updateSettings = vi.fn(() => persistence.promise)
+      render(<VoicePane settings={makeSettings(true)} updateSettings={updateSettings} />)
+      await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1))
+      expect(refreshModelStates).toHaveBeenCalledTimes(1)
+      await act(async () => {
+        if (succeeds) {
+          persistence.resolve()
+        } else {
+          persistence.reject(new Error('Settings unavailable'))
+        }
+      })
+      expect(refreshModelStates).toHaveBeenCalledTimes(succeeds ? 2 : 1)
+    }
+  )
+
+  it.each(['openai', 'openrouter'] as const)(
+    'clears the %s key when catalog lookup fails',
+    async (provider) => {
+      window.api.speech.getCatalog = vi.fn(async () => {
+        throw new Error('Catalog unavailable')
+      })
+      window.api.speech.getOpenAiApiKeyStatus = vi.fn(async () => ({ configured: true }))
+      window.api.speech.getOpenRouterApiKeyStatus = vi.fn(async () => ({ configured: true }))
+      const settings: GlobalSettings = {
+        ...makeSettings(true),
+        voice: {
+          ...getDefaultVoiceSettings(),
+          sttModel: 'unidentified-model',
+          openAiApiKeyConfigured: true,
+          openRouterApiKeyConfigured: true
+        }
+      }
+      const updateSettings = vi.fn()
+      render(<VoicePane settings={settings} updateSettings={updateSettings} />)
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: `Disconnect ${provider === 'openai' ? 'OpenAI' : 'OpenRouter'} API key`
+        })
+      )
+      await waitFor(() =>
+        expect(updateSettings).toHaveBeenCalledWith({
+          voice: expect.objectContaining({
+            sttModel: 'unidentified-model',
+            openAiApiKeyConfigured: provider !== 'openai',
+            openRouterApiKeyConfigured: provider !== 'openrouter'
+          })
+        })
+      )
+      expect(
+        provider === 'openai'
+          ? window.api.speech.clearOpenAiApiKey
+          : window.api.speech.clearOpenRouterApiKey
+      ).toHaveBeenCalledOnce()
+    }
+  )
+
   it.each(['openai', 'openrouter'] as const)(
     'rechecks the other provider after replacing an existing %s key',
     async (provider) => {

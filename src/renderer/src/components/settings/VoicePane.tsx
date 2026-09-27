@@ -93,14 +93,16 @@ export function VoicePane({ settings, updateSettings }: VoicePaneProps): React.J
           : (voiceSettings.openRouterApiKeyConfigured ?? false)
       void getCloudTranscriptionKeyApi(provider)
         .getStatus()
-        .then((status) => {
+        .then(async (status) => {
           if (
             !cancelled &&
             keyChangeEpoch === keyChangeEpochRef.current &&
             status.configured !== configured
           ) {
-            updateVoiceSettings(cloudTranscriptionConfiguredUpdate(provider, status.configured))
-            refreshModelStates()
+            await updateVoiceSettings(
+              cloudTranscriptionConfiguredUpdate(provider, status.configured)
+            )
+            await refreshModelStates()
           }
         })
         .catch(() => {})
@@ -192,9 +194,10 @@ export function VoicePane({ settings, updateSettings }: VoicePaneProps): React.J
     const api = getCloudTranscriptionKeyApi(provider)
     const providerLabel = getCloudTranscriptionProviderLabel(provider)
     try {
+      // Remove credentials without metadata; clear selections only with known provider ownership.
       const currentCatalog =
         operation === 'clear' && catalog.length === 0
-          ? await window.api.speech.getCatalog()
+          ? await window.api.speech.getCatalog().catch(() => catalog)
           : catalog
       await (operation === 'save' ? api.save(apiKeyDraft) : api.clear())
       keyChangeEpochRef.current += 1
