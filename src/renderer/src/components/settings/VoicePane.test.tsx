@@ -395,11 +395,88 @@ describe('Voice cloud transcription keys', () => {
 
   afterEach(cleanup)
 
+  it.each(['openai', 'openrouter'] as const)(
+    'rechecks the other provider after replacing an existing %s key',
+    async (provider) => {
+      const otherStatus = Promise.withResolvers<{ configured: boolean }>()
+      window.api.speech.getOpenAiApiKeyStatus = vi.fn(() =>
+        provider === 'openai' ? Promise.resolve({ configured: true }) : otherStatus.promise
+      )
+      window.api.speech.getOpenRouterApiKeyStatus = vi.fn(() =>
+        provider === 'openrouter' ? Promise.resolve({ configured: true }) : otherStatus.promise
+      )
+      const settings: GlobalSettings = {
+        ...makeSettings(true),
+        voice: {
+          ...getDefaultVoiceSettings(),
+          sttModel: 'local-model',
+          openAiApiKeyConfigured: provider === 'openai',
+          openRouterApiKeyConfigured: provider === 'openrouter'
+        }
+      }
+      const updateSettings = vi.fn()
+      render(<VoicePane settings={settings} updateSettings={updateSettings} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Replace key' }))
+      fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'replacement-key' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Save Key' }))
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+      await act(async () => otherStatus.resolve({ configured: true }))
+
+      expect(updateSettings).toHaveBeenLastCalledWith({
+        voice: expect.objectContaining({
+          sttModel: 'local-model',
+          openAiApiKeyConfigured: true,
+          openRouterApiKeyConfigured: true
+        })
+      })
+    }
+  )
+
+  it.each(['openai', 'openrouter'] as const)(
+    'waits for model provider evidence before clearing a %s key',
+    async (provider) => {
+      const pendingCatalog = Promise.withResolvers<SpeechModelManifest[]>()
+      const model = { ...catalog[0], provider, type: provider }
+      window.api.speech.getCatalog = vi.fn(() => pendingCatalog.promise)
+      window.api.speech.getOpenAiApiKeyStatus = vi.fn(async () => ({ configured: true }))
+      window.api.speech.getOpenRouterApiKeyStatus = vi.fn(async () => ({ configured: true }))
+      const settings: GlobalSettings = {
+        ...makeSettings(true),
+        voice: {
+          ...getDefaultVoiceSettings(),
+          sttModel: model.id,
+          openAiApiKeyConfigured: true,
+          openRouterApiKeyConfigured: true
+        }
+      }
+      const updateSettings = vi.fn()
+      render(<VoicePane settings={settings} updateSettings={updateSettings} />)
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: `Disconnect ${provider === 'openai' ? 'OpenAI' : 'OpenRouter'} API key`
+        })
+      )
+      expect(window.api.speech.clearOpenAiApiKey).not.toHaveBeenCalled()
+      expect(window.api.speech.clearOpenRouterApiKey).not.toHaveBeenCalled()
+      await act(async () => pendingCatalog.resolve([model]))
+
+      expect(updateSettings).toHaveBeenCalledWith({
+        voice: expect.objectContaining({
+          sttModel: '',
+          openAiApiKeyConfigured: provider !== 'openai',
+          openRouterApiKeyConfigured: provider !== 'openrouter'
+        })
+      })
+    }
+  )
+
   it.each([
     ['openai', 'save'],
     ['openai', 'clear'],
+    ['openai', 'replace'],
     ['openrouter', 'save'],
-    ['openrouter', 'clear']
+    ['openrouter', 'clear'],
+    ['openrouter', 'replace']
   ] as const)(
     'ignores late provider status replies after %s key %s',
     async (provider, operation) => {
@@ -416,7 +493,8 @@ describe('Voice cloud transcription keys', () => {
         type: provider
       }
       window.api.speech.getCatalog = vi.fn(async () => [model])
-      const configured = operation === 'clear'
+      const configured = operation !== 'save'
+      const selectedModelId = operation === 'clear' ? '' : model.id
       const settings: GlobalSettings = {
         ...makeSettings(true),
         voice: {
@@ -424,14 +502,16 @@ describe('Voice cloud transcription keys', () => {
           enabled: true,
           openAiApiKeyConfigured: configured,
           openRouterApiKeyConfigured: configured,
-          sttModel: configured ? model.id : 'local-model'
+          sttModel: operation === 'clear' ? model.id : 'local-model'
         }
       }
-      const updateSettings = vi.fn(() => persistence.promise)
+      const updateSettings = vi.fn<(updates: Partial<GlobalSettings>) => Promise<void>>(
+        () => persistence.promise
+      )
       const view = render(<VoicePane settings={settings} updateSettings={updateSettings} />)
       fireEvent.keyDown(screen.getByRole('button', { name: 'Select Model' }), { key: 'Enter' })
       const option = await screen.findByRole('menuitem', { name: /Cloud model/ })
-      if (operation === 'save') {
+      if (operation !== 'clear') {
         fireEvent.click(option)
         fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'speech-key' } })
         fireEvent.click(screen.getByRole('button', { name: 'Save Key' }))
@@ -445,7 +525,7 @@ describe('Voice cloud transcription keys', () => {
       }
       await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1))
       expect(updateSettings).toHaveBeenLastCalledWith({
-        voice: expect.objectContaining({ sttModel: operation === 'save' ? model.id : '' })
+        voice: expect.objectContaining({ sttModel: selectedModelId })
       })
 
       // A model-state refresh can render old persisted settings before this write finishes.
@@ -456,11 +536,24 @@ describe('Voice cloud transcription keys', () => {
         />
       )
       await act(async () => {
-        openAiStatus.resolve({ configured: !configured })
-        openRouterStatus.resolve({ configured: !configured })
+        openAiStatus.resolve({
+          configured: provider === 'openai' ? operation !== 'clear' : !configured
+        })
+        openRouterStatus.resolve({
+          configured: provider === 'openrouter' ? operation !== 'clear' : !configured
+        })
       })
       expect(updateSettings).toHaveBeenCalledTimes(1)
-      persistence.resolve()
+      view.rerender(
+        <VoicePane
+          settings={{ ...settings, ...updateSettings.mock.calls[0][0] }}
+          updateSettings={updateSettings}
+        />
+      )
+      await act(async () => persistence.resolve())
+      expect(updateSettings).toHaveBeenLastCalledWith({
+        voice: expect.objectContaining({ sttModel: selectedModelId })
+      })
     }
   )
 

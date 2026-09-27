@@ -22,7 +22,7 @@ export { handleVoiceDictationToggle }
 
 type VoicePaneProps = {
   settings: GlobalSettings
-  updateSettings: (updates: Partial<GlobalSettings>) => void
+  updateSettings: (updates: Partial<GlobalSettings>) => void | Promise<void>
 }
 
 export function VoicePane({ settings, updateSettings }: VoicePaneProps): React.JSX.Element {
@@ -57,9 +57,9 @@ export function VoicePane({ settings, updateSettings }: VoicePaneProps): React.J
   }, [])
 
   const updateVoiceSettings = useCallback(
-    (updates: Partial<VoiceSettings>): void => {
+    (updates: Partial<VoiceSettings>): void | Promise<void> => {
       voiceSettingsRef.current = { ...voiceSettingsRef.current, ...updates }
-      updateSettings({ voice: voiceSettingsRef.current })
+      return updateSettings({ voice: voiceSettingsRef.current })
     },
     [updateSettings]
   )
@@ -81,6 +81,9 @@ export function VoicePane({ settings, updateSettings }: VoicePaneProps): React.J
   }, [refreshModelStates])
 
   useEffect(() => {
+    if (keyPending) {
+      return
+    }
     let cancelled = false
     const keyChangeEpoch = keyChangeEpochRef.current
     for (const provider of ['openai', 'openrouter'] as const) {
@@ -106,6 +109,7 @@ export function VoicePane({ settings, updateSettings }: VoicePaneProps): React.J
       cancelled = true
     }
   }, [
+    keyPending,
     updateVoiceSettings,
     refreshModelStates,
     voiceSettings.openAiApiKeyConfigured,
@@ -188,13 +192,17 @@ export function VoicePane({ settings, updateSettings }: VoicePaneProps): React.J
     const api = getCloudTranscriptionKeyApi(provider)
     const providerLabel = getCloudTranscriptionProviderLabel(provider)
     try {
+      const currentCatalog =
+        operation === 'clear' && catalog.length === 0
+          ? await window.api.speech.getCatalog()
+          : catalog
       await (operation === 'save' ? api.save(apiKeyDraft) : api.clear())
       keyChangeEpochRef.current += 1
       const currentModelId = voiceSettingsRef.current.sttModel
       const clearSelectedModel =
         operation === 'clear' &&
-        catalog.some((model) => model.id === currentModelId && model.provider === provider)
-      updateVoiceSettings({
+        currentCatalog.some((model) => model.id === currentModelId && model.provider === provider)
+      await updateVoiceSettings({
         ...cloudTranscriptionConfiguredUpdate(provider, operation === 'save'),
         ...(clearSelectedModel
           ? { sttModel: '' }
