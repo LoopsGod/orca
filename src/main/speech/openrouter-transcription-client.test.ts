@@ -26,7 +26,7 @@ describe('OpenRouterTranscriptionSession', () => {
       headers: {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://github.com/stablyai/orca',
+        'HTTP-Referer': 'https://onorca.dev',
         'X-OpenRouter-Title': 'Orca'
       }
     })
