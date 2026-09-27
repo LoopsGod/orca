@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { toast } from 'sonner'
 import type {
   VoiceSettings,
@@ -10,11 +10,16 @@ import { Label } from '../ui/label'
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuLabel,
   DropdownMenuItem,
   DropdownMenuTrigger
 } from '../ui/dropdown-menu'
 import { Cloud, Download, Trash2, Loader2, ChevronDown, Check } from 'lucide-react'
 import { translate } from '@/i18n/i18n'
+import {
+  getCloudTranscriptionProviderLabel,
+  type CloudTranscriptionProvider
+} from './cloud-transcription-provider'
 
 function describeSpeechModelDownloadError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error)
@@ -28,7 +33,7 @@ type VoiceSpeechModelSectionProps = {
   catalog: SpeechModelManifest[]
   modelStates: SpeechModelState[]
   onUpdateVoiceSettings: (updates: Partial<VoiceSettings>) => void
-  onOpenOpenAiDialog: (modelId: string) => void
+  onOpenCloudDialog: (provider: CloudTranscriptionProvider, modelId: string) => void
   onRefreshModelStates: () => void
 }
 
@@ -37,7 +42,7 @@ export function VoiceSpeechModelSection({
   catalog,
   modelStates,
   onUpdateVoiceSettings,
-  onOpenOpenAiDialog,
+  onOpenCloudDialog,
   onRefreshModelStates
 }: VoiceSpeechModelSectionProps): React.JSX.Element {
   const [pendingDeleteModelIds, setPendingDeleteModelIds] = useState<Set<string>>(() => new Set())
@@ -78,153 +83,177 @@ export function VoiceSpeechModelSection({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-96">
-          {catalog.map((manifest) => {
-            const mState = getModelState(manifest.id)
-            const isReady = mState?.status === 'ready'
-            const isDownloading =
-              mState?.status === 'downloading' || mState?.status === 'extracting'
-            const isActive = voiceSettings.sttModel === manifest.id
-            const isCloud = manifest.provider === 'openai'
-            const deletePending = pendingDeleteModelIds.has(manifest.id)
-            const sizeMb = manifest.sizeBytes ? Math.round(manifest.sizeBytes / 1_000_000) : null
+          {(['local', 'openai', 'openrouter'] as const).map((provider) => (
+            <Fragment key={provider}>
+              <DropdownMenuLabel>
+                {provider === 'local'
+                  ? translate('settings.voice.localProvider', 'LOCAL')
+                  : getCloudTranscriptionProviderLabel(provider).toUpperCase()}
+              </DropdownMenuLabel>
+              {catalog
+                .filter((model) => model.provider === provider)
+                .map((manifest) => {
+                  const mState = getModelState(manifest.id)
+                  const isReady = mState?.status === 'ready'
+                  const isDownloading =
+                    mState?.status === 'downloading' || mState?.status === 'extracting'
+                  const isActive = voiceSettings.sttModel === manifest.id
+                  const isCloud = manifest.provider !== 'local'
+                  const deletePending = pendingDeleteModelIds.has(manifest.id)
+                  const sizeMb = manifest.sizeBytes
+                    ? Math.round(manifest.sizeBytes / 1_000_000)
+                    : null
 
-            return (
-              <DropdownMenuItem
-                key={manifest.id}
-                disabled={isDownloading}
-                onSelect={(event) => {
-                  if (isReady) {
-                    onUpdateVoiceSettings({ sttModel: manifest.id })
-                  } else if (isCloud) {
-                    onOpenOpenAiDialog(manifest.id)
-                  } else if (!isDownloading) {
-                    // Why: download progress appears in this menu, so starting one should not dismiss it.
-                    event.preventDefault()
-                    void window.api.speech.downloadModel(manifest.id).catch((error: unknown) =>
-                      toast.error(
-                        translate(
-                          'auto.components.settings.VoicePane.cfde55c7b0',
-                          'Failed to download model.'
-                        ),
-                        // Why: the raw cause (e.g. net::ERR_CONTENT_LENGTH_MISMATCH)
-                        // is the only diagnosable signal users can report back.
-                        { description: describeSpeechModelDownloadError(error) }
-                      )
-                    )
-                  }
-                }}
-                className={`group flex items-center gap-2.5 py-2.5 ${
-                  !isCloud && !isReady && !isDownloading ? 'opacity-50' : ''
-                }`}
-              >
-                <span className="flex size-4 shrink-0 items-center justify-center">
-                  {isActive && isReady ? (
-                    <Check className="size-3.5" />
-                  ) : isDownloading ? (
-                    <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
-                  ) : isCloud ? (
-                    <Cloud className="size-3.5 text-muted-foreground" />
-                  ) : null}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-sm font-medium">{manifest.label}</span>
-                    {!isCloud && (
-                      <span className="text-[10px] px-1 py-px rounded-full leading-none bg-muted text-muted-foreground">
-                        {manifest.streaming
-                          ? translate('auto.components.settings.VoicePane.d504ab05f0', 'streaming')
-                          : translate('auto.components.settings.VoicePane.8f4d2a51d7', 'offline')}
-                      </span>
-                    )}
-                    {manifest.recommended && (
-                      <span className="text-[10px] px-1 py-px rounded-full leading-none bg-status-success-background text-status-success">
-                        {translate('auto.components.settings.VoicePane.1ba81c0ff0', 'recommended')}
-                      </span>
-                    )}
-                    <span className="text-[10px] text-muted-foreground/60">
-                      {isDownloading && mState?.progress !== undefined
-                        ? mState.status === 'extracting'
-                          ? translate(
-                              'auto.components.settings.VoicePane.61a16c8141',
-                              'Extracting...'
+                  return (
+                    <DropdownMenuItem
+                      key={manifest.id}
+                      disabled={isDownloading}
+                      onSelect={(event) => {
+                        if (isReady) {
+                          onUpdateVoiceSettings({ sttModel: manifest.id })
+                        } else if (manifest.provider !== 'local') {
+                          onOpenCloudDialog(manifest.provider, manifest.id)
+                        } else if (!isDownloading) {
+                          // Why: download progress appears in this menu, so starting one should not dismiss it.
+                          event.preventDefault()
+                          void window.api.speech
+                            .downloadModel(manifest.id)
+                            .catch((error: unknown) =>
+                              toast.error(
+                                translate(
+                                  'auto.components.settings.VoicePane.cfde55c7b0',
+                                  'Failed to download model.'
+                                ),
+                                // Why: the raw cause (e.g. net::ERR_CONTENT_LENGTH_MISMATCH)
+                                // is the only diagnosable signal users can report back.
+                                { description: describeSpeechModelDownloadError(error) }
+                              )
                             )
-                          : `${Math.round(mState.progress * 100)}%`
-                        : isCloud
-                          ? null
-                          : translate(
-                              'auto.components.settings.VoicePane.91980ce124',
-                              '{{value0}} MB',
-                              { value0: sizeMb }
-                            )}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
-                    {manifest.description}
-                  </p>
-                </div>
-                {!isCloud && isReady ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label={translate(
-                      'auto.components.settings.VoicePane.6fa734ed95',
-                      'Delete {{value0}}',
-                      {
-                        value0: manifest.label
-                      }
-                    )}
-                    disabled={deletePending}
-                    onMouseDown={(event) => {
-                      event.preventDefault()
-                      event.stopPropagation()
-                    }}
-                    onClick={(event) => {
-                      event.preventDefault()
-                      event.stopPropagation()
-                      if (deletePending) {
-                        return
-                      }
-                      setPendingDeleteModelIds((prev) => {
-                        const next = new Set(prev)
-                        next.add(manifest.id)
-                        return next
-                      })
-                      void window.api.speech
-                        .deleteModel(manifest.id)
-                        .then(onRefreshModelStates)
-                        .catch(() =>
-                          toast.error(
-                            translate(
-                              'auto.components.settings.VoicePane.68de13f72c',
-                              'Failed to delete model.'
-                            )
-                          )
-                        )
-                        .finally(() =>
-                          setPendingDeleteModelIds((prev) => {
-                            const next = new Set(prev)
-                            next.delete(manifest.id)
-                            return next
-                          })
-                        )
-                    }}
-                    className="shrink-0 text-muted-foreground can-hover:opacity-0 group-hover:opacity-100 hover:text-destructive disabled:opacity-60 disabled:hover:text-muted-foreground"
-                  >
-                    {deletePending ? (
-                      <Loader2 className="size-3 animate-spin" />
-                    ) : (
-                      <Trash2 className="size-3" />
-                    )}
-                  </Button>
-                ) : !isCloud && !isReady && !isDownloading ? (
-                  <span className="shrink-0 p-1 text-muted-foreground can-hover:opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Download className="size-3" />
-                  </span>
-                ) : null}
-              </DropdownMenuItem>
-            )
-          })}
+                        }
+                      }}
+                      className="group"
+                    >
+                      <span className="flex size-4 shrink-0 items-center justify-center">
+                        {isActive && isReady ? (
+                          <Check className="size-3.5" />
+                        ) : isDownloading ? (
+                          <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+                        ) : isCloud ? (
+                          <Cloud className="size-3.5 text-muted-foreground" />
+                        ) : null}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm font-medium">{manifest.label}</span>
+                          {!isCloud && (
+                            <span className="text-[10px] px-1 py-px rounded-full leading-none bg-muted text-muted-foreground">
+                              {manifest.streaming
+                                ? translate(
+                                    'auto.components.settings.VoicePane.d504ab05f0',
+                                    'streaming'
+                                  )
+                                : translate(
+                                    'auto.components.settings.VoicePane.8f4d2a51d7',
+                                    'offline'
+                                  )}
+                            </span>
+                          )}
+                          {manifest.recommended && (
+                            <span className="text-[10px] px-1 py-px rounded-full leading-none bg-status-success-background text-status-success">
+                              {translate(
+                                'auto.components.settings.VoicePane.1ba81c0ff0',
+                                'recommended'
+                              )}
+                            </span>
+                          )}
+                          <span className="text-[10px] text-muted-foreground/60">
+                            {isDownloading && mState?.progress !== undefined
+                              ? mState.status === 'extracting'
+                                ? translate(
+                                    'auto.components.settings.VoicePane.61a16c8141',
+                                    'Extracting...'
+                                  )
+                                : `${Math.round(mState.progress * 100)}%`
+                              : manifest.provider !== 'local'
+                                ? translate('settings.voice.cloudProviderApi', '{{provider}} API', {
+                                    provider: getCloudTranscriptionProviderLabel(manifest.provider)
+                                  })
+                                : translate(
+                                    'auto.components.settings.VoicePane.91980ce124',
+                                    '{{value0}} MB',
+                                    { value0: sizeMb }
+                                  )}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
+                          {manifest.description}
+                        </p>
+                      </div>
+                      {!isCloud && isReady ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-xs"
+                          aria-label={translate(
+                            'auto.components.settings.VoicePane.6fa734ed95',
+                            'Delete {{value0}}',
+                            {
+                              value0: manifest.label
+                            }
+                          )}
+                          disabled={deletePending}
+                          onMouseDown={(event) => {
+                            event.preventDefault()
+                            event.stopPropagation()
+                          }}
+                          onClick={(event) => {
+                            event.preventDefault()
+                            event.stopPropagation()
+                            if (deletePending) {
+                              return
+                            }
+                            setPendingDeleteModelIds((prev) => {
+                              const next = new Set(prev)
+                              next.add(manifest.id)
+                              return next
+                            })
+                            void window.api.speech
+                              .deleteModel(manifest.id)
+                              .then(onRefreshModelStates)
+                              .catch(() =>
+                                toast.error(
+                                  translate(
+                                    'auto.components.settings.VoicePane.68de13f72c',
+                                    'Failed to delete model.'
+                                  )
+                                )
+                              )
+                              .finally(() =>
+                                setPendingDeleteModelIds((prev) => {
+                                  const next = new Set(prev)
+                                  next.delete(manifest.id)
+                                  return next
+                                })
+                              )
+                          }}
+                          className="shrink-0 text-muted-foreground can-hover:opacity-0 group-hover:opacity-100 hover:text-destructive disabled:opacity-60 disabled:hover:text-muted-foreground"
+                        >
+                          {deletePending ? (
+                            <Loader2 className="size-3 animate-spin" />
+                          ) : (
+                            <Trash2 className="size-3" />
+                          )}
+                        </Button>
+                      ) : !isCloud && !isReady && !isDownloading ? (
+                        <span className="shrink-0 p-1 text-muted-foreground can-hover:opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Download className="size-3" />
+                        </span>
+                      ) : null}
+                    </DropdownMenuItem>
+                  )
+                })}
+            </Fragment>
+          ))}
         </DropdownMenuContent>
       </DropdownMenu>
     </div>

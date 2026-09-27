@@ -62,6 +62,15 @@ describe('OpenAI speech API key store', () => {
     expect(safeStorageMock.decryptString).toHaveBeenCalledOnce()
   })
 
+  it('preserves the legacy encrypted JSON format', async () => {
+    writeStoredOpenAiKey(
+      JSON.stringify({ encryptedKeyBase64: Buffer.from('legacy-key').toString('base64') })
+    )
+    const store = await loadStoreModule()
+    expect(store.readOpenAiSpeechApiKey()).toBe('legacy-key')
+    expect(safeStorageMock.decryptString).toHaveBeenCalledWith(Buffer.from('legacy-key'))
+  })
+
   it('caches the decrypted key so repeated dictations do not repeatedly touch safeStorage', async () => {
     writeStoredOpenAiKey('encrypted-key')
     const store = await loadStoreModule()

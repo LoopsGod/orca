@@ -8,7 +8,8 @@ import type { AgentActivityDisplayMode } from './ui-chrome-types'
 import type { WorkspaceSessionState } from './workspace-session-state-types'
 import { EMPTY_CODEX_RESET_CREDIT_ATTEMPT_LEDGER } from './codex-reset-credit-attempt-ledger'
 import { DEFAULT_STATUS_BAR_ITEMS } from './status-bar-defaults'
-import type { VoiceSettings } from './speech-types'
+import { getDefaultVoiceSettings } from './speech-defaults'
+export { getDefaultVoiceSettings } from './speech-defaults'
 import { cloneDefaultWorkspaceStatuses } from './workspace-statuses'
 import { DEFAULT_WORKTREE_CARD_PROPERTIES } from './worktree/card-properties'
 import { DEFAULT_AGENTS_GROUP_BY, DEFAULT_AGENTS_READ_FILTER } from './agents-view-thread-filters'
@@ -176,21 +177,6 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
 
     voice: getDefaultVoiceSettings()
   })
-}
-
-export function getDefaultVoiceSettings(): VoiceSettings {
-  return {
-    enabled: false,
-    sttModel: '',
-    modelsDir: '',
-    language: 'en',
-    dictationMode: 'toggle' as const,
-    terminalConfirmBeforeInsert: false,
-    userModels: [],
-    openAiApiKeyConfigured: false,
-    microphoneDeviceId: null,
-    microphoneDeviceLabel: null
-  }
 }
 
 export function getDefaultRepoHookSettings(): RepoHookSettings {

@@ -1,13 +1,22 @@
 // @vitest-environment happy-dom
 
-import { act } from 'react'
+import { act, type ComponentProps } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DeveloperPermissionRequestResult } from '../../../../shared/developer-permissions-types'
 import type { SpeechModelManifest } from '../../../../shared/speech-types'
 import type { GlobalSettings } from '../../../../shared/global-settings-types'
 import { getDefaultVoiceSettings } from '../../../../shared/constants'
-import { handleVoiceDictationToggle, VoicePane } from './VoicePane'
+import { handleVoiceDictationToggle, VoicePane as VoicePaneContent } from './VoicePane'
+import { TooltipProvider } from '../ui/tooltip'
+
+function VoicePane(props: ComponentProps<typeof VoicePaneContent>): React.JSX.Element {
+  return (
+    <TooltipProvider>
+      <VoicePaneContent {...props} />
+    </TooltipProvider>
+  )
+}
 
 const { useAppStoreMock, useShortcutLabelMock } = vi.hoisted(() => ({
   useAppStoreMock: vi.fn(),
@@ -57,6 +66,9 @@ function installWindowApi(
       },
       speech: {
         getCatalog: vi.fn(async () => EMPTY_SPEECH_CATALOG),
+        getOpenRouterApiKeyStatus: vi.fn(async () => ({ configured: false })),
+        saveOpenRouterApiKey: vi.fn(async () => ({ configured: true })),
+        clearOpenRouterApiKey: vi.fn(async () => ({ configured: false })),
         getOpenAiApiKeyStatus: vi.fn(async () => ({ configured: false })),
         saveOpenAiApiKey: vi.fn(async () => ({ configured: true })),
         clearOpenAiApiKey: vi.fn(async () => ({ configured: false })),

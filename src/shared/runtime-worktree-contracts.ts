@@ -7,6 +7,7 @@ import type {
   WorktreeLineageWarning
 } from './worktree/lineage-types'
 import type { RuntimeListingHostScope } from './runtime-listing-host-scope'
+import type { SpeechModelProvider } from './speech-types'
 import type { GitWorktreeInfo, Worktree } from './worktree/types'
 
 export type RuntimeWorktreeAgentRow = {
@@ -81,7 +82,7 @@ export type RuntimeGitLocalBranches = {
 export type RuntimeSpeechModelSummary = {
   id: string
   label: string
-  provider: 'local' | 'openai'
+  provider: SpeechModelProvider
   sizeBytes: number | null
   recommended: boolean
   status: 'ready' | 'not-downloaded' | 'downloading' | 'extracting' | 'error'
