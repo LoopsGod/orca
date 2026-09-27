@@ -40,6 +40,7 @@ export function VoicePane({ settings, updateSettings }: VoicePaneProps): React.J
   } | null>(null)
   const [apiKeyDraft, setApiKeyDraft] = useState('')
   const [keyPending, setKeyPending] = useState(false)
+  const keyChangeEpochRef = useRef(0)
   const mountedRef = useRef(true)
   // Why: every write here is a read-modify-write of the whole voice object, and the
   // writers are async (key status probe, save/clear key). Merging onto the render-time
@@ -81,6 +82,7 @@ export function VoicePane({ settings, updateSettings }: VoicePaneProps): React.J
 
   useEffect(() => {
     let cancelled = false
+    const keyChangeEpoch = keyChangeEpochRef.current
     for (const provider of ['openai', 'openrouter'] as const) {
       const configured =
         provider === 'openai'
@@ -89,7 +91,11 @@ export function VoicePane({ settings, updateSettings }: VoicePaneProps): React.J
       void getCloudTranscriptionKeyApi(provider)
         .getStatus()
         .then((status) => {
-          if (!cancelled && status.configured !== configured) {
+          if (
+            !cancelled &&
+            keyChangeEpoch === keyChangeEpochRef.current &&
+            status.configured !== configured
+          ) {
             updateVoiceSettings(cloudTranscriptionConfiguredUpdate(provider, status.configured))
             refreshModelStates()
           }
@@ -183,6 +189,7 @@ export function VoicePane({ settings, updateSettings }: VoicePaneProps): React.J
     const providerLabel = getCloudTranscriptionProviderLabel(provider)
     try {
       await (operation === 'save' ? api.save(apiKeyDraft) : api.clear())
+      keyChangeEpochRef.current += 1
       const currentModelId = voiceSettingsRef.current.sttModel
       const clearSelectedModel =
         operation === 'clear' &&

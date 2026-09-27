@@ -395,6 +395,75 @@ describe('Voice cloud transcription keys', () => {
 
   afterEach(cleanup)
 
+  it.each([
+    ['openai', 'save'],
+    ['openai', 'clear'],
+    ['openrouter', 'save'],
+    ['openrouter', 'clear']
+  ] as const)(
+    'ignores late provider status replies after %s key %s',
+    async (provider, operation) => {
+      const openAiStatus = Promise.withResolvers<{ configured: boolean }>()
+      const openRouterStatus = Promise.withResolvers<{ configured: boolean }>()
+      const persistence = Promise.withResolvers<void>()
+      window.api.speech.getOpenAiApiKeyStatus = vi.fn(() => openAiStatus.promise)
+      window.api.speech.getOpenRouterApiKeyStatus = vi.fn(() => openRouterStatus.promise)
+      const model = {
+        ...catalog[0],
+        id: 'cloud-model',
+        label: 'Cloud model',
+        provider,
+        type: provider
+      }
+      window.api.speech.getCatalog = vi.fn(async () => [model])
+      const configured = operation === 'clear'
+      const settings: GlobalSettings = {
+        ...makeSettings(true),
+        voice: {
+          ...getDefaultVoiceSettings(),
+          enabled: true,
+          openAiApiKeyConfigured: configured,
+          openRouterApiKeyConfigured: configured,
+          sttModel: configured ? model.id : 'local-model'
+        }
+      }
+      const updateSettings = vi.fn(() => persistence.promise)
+      const view = render(<VoicePane settings={settings} updateSettings={updateSettings} />)
+      fireEvent.keyDown(screen.getByRole('button', { name: 'Select Model' }), { key: 'Enter' })
+      const option = await screen.findByRole('menuitem', { name: /Cloud model/ })
+      if (operation === 'save') {
+        fireEvent.click(option)
+        fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'speech-key' } })
+        fireEvent.click(screen.getByRole('button', { name: 'Save Key' }))
+      } else {
+        fireEvent.keyDown(option, { key: 'Escape' })
+        fireEvent.click(
+          screen.getByRole('button', {
+            name: `Disconnect ${provider === 'openai' ? 'OpenAI' : 'OpenRouter'} API key`
+          })
+        )
+      }
+      await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1))
+      expect(updateSettings).toHaveBeenLastCalledWith({
+        voice: expect.objectContaining({ sttModel: operation === 'save' ? model.id : '' })
+      })
+
+      // A model-state refresh can render old persisted settings before this write finishes.
+      view.rerender(
+        <VoicePane
+          settings={{ ...settings, voice: { ...(settings.voice ?? getDefaultVoiceSettings()) } }}
+          updateSettings={updateSettings}
+        />
+      )
+      await act(async () => {
+        openAiStatus.resolve({ configured: !configured })
+        openRouterStatus.resolve({ configured: !configured })
+      })
+      expect(updateSettings).toHaveBeenCalledTimes(1)
+      persistence.resolve()
+    }
+  )
+
   it.each(['Escape', 'Close'])('keeps pending key setup open on %s', async (dismiss) => {
     let finishSave: (status: { configured: boolean }) => void = () => {}
     window.api.speech.saveOpenRouterApiKey = vi.fn(
