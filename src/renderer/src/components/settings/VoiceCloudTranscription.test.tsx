@@ -85,6 +85,26 @@ describe('Voice cloud transcription keys', () => {
 
   afterEach(cleanup)
 
+  it.each(['Escape', 'Close'])('keeps pending key setup open on %s', async (dismiss) => {
+    let finishSave: (status: { configured: boolean }) => void = () => {}
+    window.api.speech.saveOpenRouterApiKey = vi.fn(
+      () => new Promise<{ configured: boolean }>((resolve) => (finishSave = resolve))
+    )
+    render(<StatefulVoicePane />)
+    fireEvent.click(screen.getByRole('button', { name: 'Add API key' }))
+    fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'sk-or-pending' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save Key' }))
+    if (dismiss === 'Escape') {
+      fireEvent.keyDown(document, { key: 'Escape' })
+    } else {
+      fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    }
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    window.api.speech.getOpenRouterApiKeyStatus = vi.fn(async () => ({ configured: true }))
+    finishSave({ configured: true })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
   it('adds, replaces and disconnects the OpenRouter key independently of OpenAI', async () => {
     render(<StatefulVoicePane modelId="openai-gpt-4o-transcribe" />)
     fireEvent.click(screen.getByRole('button', { name: 'Add API key' }))

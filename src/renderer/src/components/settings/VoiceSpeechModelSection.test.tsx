@@ -143,6 +143,29 @@ describe('VoiceSpeechModelSection', () => {
     vi.unstubAllGlobals()
   })
 
+  it('groups an unordered catalog into Local, OpenAI and OpenRouter', () => {
+    const openAiModel: SpeechModelManifest = {
+      ...openRouterModel,
+      id: 'openai',
+      provider: 'openai'
+    }
+    const { container, root } = renderSection({
+      deleteModel: async () => {},
+      catalog: [openRouterModel, localModel, openAiModel, secondLocalModel]
+    })
+    const menu = container.querySelector('[role="option"]')?.parentElement
+    expect(Array.from(menu?.children ?? [], (child) => child.textContent)).toEqual([
+      'LOCAL',
+      expect.stringContaining('Local Model'),
+      expect.stringContaining('Second Local Model'),
+      'OPENAI',
+      expect.stringContaining('OpenAI API'),
+      'OPENROUTER',
+      expect.stringContaining('OpenRouter API')
+    ])
+    root.unmount()
+  })
+
   it('shows delete for the selected ready local row and refreshes after success', async () => {
     let resolveDelete: () => void = () => {}
     const refreshModelStates = vi.fn()

@@ -215,7 +215,10 @@
       "localProvider": "LOCAL",
       "cloudProviderApi": "{{provider}} API",
       "openRouterTranscriptionTitle": "OpenRouter Transcription",
-      "openRouterTranscriptionDescription": "Configure the OpenRouter API key used for cloud speech-to-text models."
+      "openRouterTranscriptionDescription": "Configure the OpenRouter API key used for cloud speech-to-text models.",
+      "openRouterSearchKeyword": "openrouter",
+      "maiSearchKeyword": "mai",
+      "microsoftSearchKeyword": "microsoft"
     }
   },
   "menu": {

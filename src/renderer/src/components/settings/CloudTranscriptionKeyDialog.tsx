@@ -41,7 +41,7 @@ export function CloudTranscriptionKeyDialog({
 }: CloudTranscriptionKeyDialogProps): React.JSX.Element {
   const providerLabel = getCloudTranscriptionProviderLabel(provider)
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(nextOpen) => !pending && onOpenChange(nextOpen)}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>

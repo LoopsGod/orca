@@ -107,9 +107,9 @@ export const getVoicePaneSearchEntries = createLocalizedCatalog(() => [
     ),
     keywords: [
       ...(getOpenaiTranscriptionSearchEntry().keywords ?? []),
-      'openrouter',
-      'mai',
-      'microsoft'
+      ...translateSearchKeyword('settings.voice.openRouterSearchKeyword', 'openrouter'),
+      ...translateSearchKeyword('settings.voice.maiSearchKeyword', 'mai'),
+      ...translateSearchKeyword('settings.voice.microsoftSearchKeyword', 'microsoft')
     ]
   },
   {

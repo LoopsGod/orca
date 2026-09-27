@@ -1,6 +1,8 @@
 import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
+import { Pressable } from 'react-native'
 import { describe, expect, it, vi } from 'vitest'
+import { dictationSetupSchema } from '../dictation/dictation-reply-schema'
 import { VoiceModelList } from './VoiceModelList'
 
 vi.mock('react-native', () => ({
@@ -21,10 +23,10 @@ describe('cloud speech model rows', () => {
         await act(async () => {
           renderer = create(
             createElement(VoiceModelList, {
-              setup: {
+              setup: dictationSetupSchema.parse({
                 enabled: true,
                 models: [{ id: 'openrouter-mai-transcribe-2', provider: 'openrouter', status }]
-              },
+              }),
               disabled: false,
               busyAction: null,
               onUseModel: vi.fn(),
@@ -36,7 +38,7 @@ describe('cloud speech model rows', () => {
         const content = JSON.stringify(renderer?.toJSON())
         expect(content).toContain('OpenRouter API')
         expect(content).toContain(status === 'ready' ? 'API key set' : 'Set up on desktop')
-        expect(renderer?.root.findAllByType('Pressable')).toHaveLength(0)
+        expect(renderer?.root.findAllByType(Pressable)).toHaveLength(0)
       } finally {
         act(() => renderer?.unmount())
       }

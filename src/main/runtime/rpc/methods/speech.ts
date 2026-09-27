@@ -1,4 +1,6 @@
-import { defineMethod } from '../core'
+import { defineMethod, type RpcContext } from '../core'
+import { SPEECH_OPENROUTER_RUNTIME_CAPABILITY } from '../../../../shared/protocol-version'
+import type { RuntimeSpeechSetupState } from '../../../../shared/runtime-worktree-contracts'
 import {
   DictationChunk,
   DictationHandle,
@@ -7,11 +9,26 @@ import {
   SpeechModelAction
 } from '../../../../shared/rpc-contract/speech-params'
 
+function projectSpeechSetup(
+  setup: RuntimeSpeechSetupState,
+  context: RpcContext
+): RuntimeSpeechSetupState {
+  if (
+    context.clientKind === undefined ||
+    context.clientCapabilities?.includes(SPEECH_OPENROUTER_RUNTIME_CAPABILITY)
+  ) {
+    return setup
+  }
+  // Older clients offer local download/delete actions for unknown providers.
+  return { ...setup, models: setup.models.filter((model) => model.provider !== 'openrouter') }
+}
+
 export const SPEECH_METHODS = [
   defineMethod({
     name: 'speech.models.list',
     params: null,
-    handler: async (_params, { runtime }) => runtime.listMobileSpeechModels()
+    handler: async (_params, context) =>
+      projectSpeechSetup(await context.runtime.listMobileSpeechModels(), context)
   }),
   defineMethod({
     name: 'speech.models.download',
@@ -21,17 +38,21 @@ export const SPEECH_METHODS = [
   defineMethod({
     name: 'speech.models.delete',
     params: SpeechModelAction,
-    handler: async (params, { runtime }) => runtime.deleteMobileSpeechModel(params.modelId)
+    handler: async (params, context) =>
+      projectSpeechSetup(await context.runtime.deleteMobileSpeechModel(params.modelId), context)
   }),
   defineMethod({
     name: 'speech.dictation.setup',
     params: DictationSetup,
-    handler: async (params, { runtime }) =>
-      runtime.configureMobileDictation({
-        ...(params.enabled !== undefined ? { enabled: params.enabled } : {}),
-        ...(params.modelId !== undefined ? { modelId: params.modelId } : {}),
-        ...(params.dictationMode !== undefined ? { dictationMode: params.dictationMode } : {})
-      })
+    handler: async (params, context) =>
+      projectSpeechSetup(
+        await context.runtime.configureMobileDictation({
+          ...(params.enabled !== undefined ? { enabled: params.enabled } : {}),
+          ...(params.modelId !== undefined ? { modelId: params.modelId } : {}),
+          ...(params.dictationMode !== undefined ? { dictationMode: params.dictationMode } : {})
+        }),
+        context
+      )
   }),
   defineMethod({
     name: 'speech.dictation.start',
