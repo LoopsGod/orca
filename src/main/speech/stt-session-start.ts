@@ -28,6 +28,9 @@ export async function startSttDictation(
   hotwordsFilePath?: string,
   owner = 'desktop'
 ): Promise<void> {
+  if (state.cloudStopInFlight) {
+    throw new Error('dictation_already_active')
+  }
   if (state.starting) {
     if (state.startingOwner !== owner) {
       throw new Error('dictation_already_active')
@@ -76,6 +79,9 @@ async function startSttSession(
       await teardownSttWorker(state, existingWorker)
     }
     const modelState = await state.modelManager.getModelState(modelId)
+    if (state.cloudStopInFlight) {
+      throw new Error('dictation_already_active')
+    }
     if (modelState.status !== 'ready') {
       throw new Error(`Model not ready: ${modelState.status}`)
     }
